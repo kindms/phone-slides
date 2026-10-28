@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from PIL import Image
@@ -100,6 +102,15 @@ def main():
     with open(ROOT / "簡報連結.txt", "a", encoding="utf-8") as f:
         f.write(record)
     print("\n" + record + "（已記錄在 簡報連結.txt）")
+
+    # QR Code 圖檔存在 PPT 旁邊，方便印出來或貼到 LINE
+    qr_path = src.with_name(f"聽眾QRCode_{src.stem}.png")
+    try:
+        qr_url = "https://api.qrserver.com/v1/create-qr-code/?size=800x800&margin=20&data=" + urllib.parse.quote(audience, safe="")
+        qr_path.write_bytes(urllib.request.urlopen(qr_url, timeout=20).read())
+        print(f"QR Code 圖檔：{qr_path}")
+    except Exception:
+        print("QR Code 圖檔沒產生成功（網路問題），可在講者遙控頁按「QR Code」→「下載 QR Code 圖片」。")
 
 
 if __name__ == "__main__":
