@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<meta name="robots" content="noindex">
+<title>講者遙控｜手機簡報</title>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #111; color: #eee;
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  body { display: flex; flex-direction: column; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); gap: 10px; }
+  header { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  header h1 { font-size: 16px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill { background: #222; border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+  #dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #e55; margin-right: 5px; }
+  #dot.ok { background: #4c8; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; gap: 10px; }
+  @media (min-width: 900px) {
+    main { grid-template-columns: 2fr 1fr; grid-template-rows: auto 1fr; }
+    #cur { grid-row: 1 / 3; }
+  }
+  .frame { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 9; }
+  .frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .frame .tag { position: absolute; left: 8px; top: 8px; background: rgba(0,0,0,.65); padding: 2px 8px; border-radius: 6px; font-size: 12px; }
+  .frame .live { background: #c33; }
+  .frame .ov { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.8); font-size: 18px; font-weight: 700; }
+  #side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  #nextWrap { display: flex; gap: 10px; align-items: center; }
+  #nextWrap .frame { width: 40%; flex-shrink: 0; }
+  #nextLabel { font-size: 13px; color: #999; }
+  #notes { flex: 1; min-height: 80px; overflow: auto; background: #1b1b1b; border-radius: 10px; padding: 12px;
+    font-size: 17px; line-height: 1.7; white-space: pre-wrap; color: #ddd; }
+  #notes:empty::before { content: "（這張沒有備忘稿）"; color: #666; }
+  .controls { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+  .controls button { font-size: 20px; font-weight: 700; padding: 18px 0; border-radius: 12px; border: 0; color: #fff; }
+  #prev { background: #333; }
+  #next { background: #2a7de1; }
+  .tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .tools button { font-size: 14px; padding: 10px 0; border-radius: 10px; border: 0; background: #262626; color: #ddd; }
+  .tools button.active { background: #c33; color: #fff; }
+  button:active { filter: brightness(1.3); }
+  button:disabled { opacity: .35; }
+  #qr { position: fixed; inset: 0; background: #fff; color: #000; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; padding: 20px; text-align: center; z-index: 10; }
+  #qr img { width: min(80vw, 70vh); height: auto; image-rendering: pixelated; }
+  #qr .url { font-size: 15px; word-break: break-all; color: #333; }
+  #qr .row { display: flex; gap: 10px; }
+  #qr button { font-size: 16px; padding: 10px 22px; border-radius: 999px; border: 1px solid #999; background: #fff; }
+  .hidden { display: none !important; }
+  #err { margin: auto; text-align: center; line-height: 1.8; color: #bbb; }
+</style>
+</head>
+<body>
+<div id="err" class="hidden"></div>
+
+<header id="head">
+  <h1 id="title">載入中…</h1>
+  <span class="pill"><span id="dot"></span><span id="viewers">0</span> 人在看</span>
+  <span class="pill" id="pos">尚未開始</span>
+</header>
+
+<main id="main">
+  <div id="cur" class="frame">
+    <img id="curImg" alt="">
+    <span class="tag live">聽眾現在看到</span>
+    <div id="curOv" class="ov">尚未開始，聽眾在等待畫面</div>
+  </div>
+  <div id="nextWrap">
+    <div class="frame"><img id="nextImg" alt=""></div>
+    <div id="nextLabel">下一張</div>
+  </div>
+  <div id="side"><div id="notes"></div></div>
+</main>
+
+<div class="controls" id="ctl">
+  <button id="prev">◀ 上一張</button>
+  <button id="next">開始簡報 ▶</button>
+</div>
+<div class="tools" id="tools">
+  <button id="btnQr">QR Code</button>
+  <button id="btnBlack">黑畫面</button>
+  <button id="btnRestart">回第一張</button>
+  <button id="btnEnd">結束簡報</button>
+</div>
+
+<div id="qr" class="hidden">
+  <h2 id="qrTitle"></h2>
+  <img id="qrImg" alt="QR Code">
+  <div class="url" id="qrUrl"></div>
+  <div class="row"><button id="copy">複製連結</button><button id="qrClose">關閉</button></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const deck = (new URLSearchParams(location.search).get("d") || "").replace(/[^A-Za-z0-9_-]/g, "");
+const base = "d/" + deck + "/";
+let M = null, ref = null;
+let n = 0, black = false, ended = false;   // n = 0 代表尚未開始
+
+function fail(html) {
+  ["head", "main", "ctl", "tools"].forEach((k) => $(k).classList.add("hidden"));
+  $("err").innerHTML = html;
+  $("err").classList.remove("hidden");
+}
+
+function audienceUrl() {
+  return new URL("./?r=" + M.room, location.href).href;
+}
+
+function push() {
+  const s = M.slides[n - 1];
+  ref.child("state").set({
+    title: M.title, total: M.slides.length, n,
+    img: s ? base + s.img : "", black, ended,
+    ts: firebase.database.ServerValue.TIMESTAMP,
+  });
+  render();
+}
+
+function render() {
+  const total = M.slides.length, s = M.slides[n - 1], nx = M.slides[n];
+  $("curImg").src = s ? base + s.img : "";
+  $("nextImg").src = nx ? base + nx.img : "";
+  $("nextLabel").textContent = nx ? "下一張（第 " + (n + 1) + " 張）" : "這是最後一張";
+  $("notes").textContent = s ? (s.notes || "") : (M.slides[0].notes ? "【第 1 張備忘稿】\n" + M.slides[0].notes : "");
+  $("pos").textContent = n ? n + " / " + total : "尚未開始";
+  $("next").textContent = n === 0 ? "開始簡報 ▶" : "下一張 ▶";
+  $("prev").disabled = n <= 1;
+  $("next").disabled = n >= total;
+  const ov = $("curOv");
+  ov.classList.toggle("hidden", n > 0 && !black && !ended);
+  ov.textContent = ended ? "簡報已結束" : black ? "黑畫面中（聽眾看不到投影片）" : "尚未開始，聽眾在等待畫面";
+  $("btnBlack").classList.toggle("active", black);
+  $("btnBlack").textContent = black ? "取消黑畫面" : "黑畫面";
+  if (nx) new Image().src = base + nx.img;     // 講者這邊先預載，翻頁更順
+}
+
+function go(to) {
+  to = Math.max(1, Math.min(M.slides.length, to));
+  if (to === n && !black && !ended) return;
+  n = to; black = false; ended = false;
+  push();
+}
+
+function showQr() {
+  const url = audienceUrl();
+  $("qrTitle").textContent = M.title;
+  $("qrUrl").textContent = url;
+  $("qrImg").src = "https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=10&data=" + encodeURIComponent(url);
+  $("qr").classList.remove("hidden");
+}
+
+async function init() {
+  if (!deck) return fail("講者連結不完整。<br>請用轉檔時產生的「講者遙控」連結打開。");
+  try {
+    const r = await fetch(base + "manifest.json", { cache: "no-store" });
+    if (!r.ok) throw 0;
+    M = await r.json();
+  } catch (e) {
+    return fail("找不到這份簡報。<br>如果剛上傳，等 1～2 分鐘再重新整理。");
+  }
+  document.title = "講者遙控｜" + M.title;
+  $("title").textContent = M.title;
+
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.database();
+  ref = db.ref("rooms/ps_" + M.room);
+
+  db.ref(".info/connected").on("value", (s) => $("dot").classList.toggle("ok", s.val() === true));
+  ref.child("viewers").on("value", (s) => { $("viewers").textContent = s.numChildren(); });
+
+  // 重新整理或換裝置時，接續上次的位置
+  const st = (await ref.child("state").get()).val();
+  if (st && st.total === M.slides.length) {
+    n = st.n || 0; black = !!st.black; ended = !!st.ended;
+    render();
+  } else {
+    n = 0;
+    push();
+  }
+
+  $("next").onclick = () => go(n + 1);
+  $("prev").onclick = () => go(n - 1);
+  $("btnBlack").onclick = () => { if (!n) return; black = !black; ended = false; push(); };
+  $("btnRestart").onclick = () => { if (confirm("回到第一張？")) go(1); };
+  $("btnEnd").onclick = () => { if (confirm("結束簡報？聽眾會看到「簡報結束」。")) { ended = true; black = false; push(); } };
+  $("btnQr").onclick = showQr;
+  $("qrClose").onclick = () => $("qr").classList.add("hidden");
+  $("copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(audienceUrl()); $("copy").textContent = "已複製！"; }
+    catch (e) { prompt("複製這個連結：", audienceUrl()); }
+  };
+
+  // 鍵盤與簡報筆：→ ↓ 空白 PageDown 下一張；← ↑ PageUp 上一張；B 黑畫面
+  document.addEventListener("keydown", (e) => {
+    if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(e.key)) { e.preventDefault(); go(n + 1); }
+    else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) { e.preventDefault(); go(n - 1); }
+    else if (e.key === "b" || e.key === "B" || e.key === ".") { $("btnBlack").click(); }
+    else if (e.key === "Escape") { $("qr").classList.add("hidden"); }
+  });
+
+  // 在目前投影片上左右滑動也能翻頁
+  let x0 = null;
+  $("cur").addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+  $("cur").addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 50) go(dx < 0 ? n + 1 : n - 1);
+  });
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>手機簡報</title>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; color: #eee; overflow: hidden;
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #stage img { position: absolute; max-width: 100%; max-height: 100%; object-fit: contain;
+    opacity: 0; transition: opacity .35s ease; -webkit-user-drag: none; user-select: none; }
+  #stage img.on { opacity: 1; }
+  .msg { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; text-align: center; padding: 24px; }
+  .msg h1 { font-size: 22px; font-weight: 700; }
+  .msg p { color: #999; font-size: 15px; line-height: 1.6; }
+  .hidden { display: none !important; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+    display: flex; justify-content: space-between; font-size: 12px; color: #777;
+    background: linear-gradient(transparent, rgba(0,0,0,.7)); pointer-events: none; }
+  #dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #e55; margin-right: 6px; vertical-align: 1px; }
+  #dot.ok { background: #4c8; }
+  #tap { background: #000; z-index: 5; }
+  #tap button { margin-top: 8px; font-size: 18px; font-weight: 700; padding: 14px 36px; border-radius: 999px;
+    border: 0; background: #fff; color: #000; }
+  .spin { width: 28px; height: 28px; border: 3px solid #333; border-top-color: #aaa; border-radius: 50%; animation: s 1s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="stage"><img id="imgA" alt=""><img id="imgB" alt=""></div>
+
+<div id="waiting" class="msg"><div class="spin"></div><h1 id="waitTitle">連線中…</h1><p>簡報開始後，畫面會自動出現</p></div>
+<div id="black" class="msg hidden"></div>
+<div id="ended" class="msg hidden"><h1>簡報結束</h1><p>謝謝你的參與！</p></div>
+<div id="bad" class="msg hidden"><h1>連結不完整</h1><p>請重新掃描 QR Code</p></div>
+
+<div id="tap" class="msg hidden">
+  <h1 id="tapTitle">準備好了</h1>
+  <p>講者翻到哪一頁，你的手機就會跟著換<br>手機橫放，畫面會更大</p>
+  <button id="go">開始觀看</button>
+</div>
+
+<div id="bar"><span><span id="dot"></span><span id="status">連線中</span></span><span id="page"></span></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const room = (new URLSearchParams(location.search).get("r") || "").replace(/[^A-Za-z0-9]/g, "");
+let front = $("imgA"), back = $("imgB"), shownSrc = "";
+
+// 保持螢幕不關（支援的瀏覽器才有效）
+async function keepAwake() {
+  try { if ("wakeLock" in navigator && document.visibilityState === "visible") await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+document.addEventListener("visibilitychange", keepAwake);
+
+function showOnly(id) {
+  ["waiting", "black", "ended"].forEach((k) => $(k).classList.toggle("hidden", k !== id));
+}
+
+function hideImage() {
+  front.classList.remove("on");
+  shownSrc = "";
+}
+
+function showImage(src) {
+  if (src === shownSrc) return;
+  shownSrc = src;
+  back.onload = () => {
+    if (shownSrc !== src) return;          // 載入期間講者又翻頁了
+    back.classList.add("on");
+    front.classList.remove("on");
+    [front, back] = [back, front];
+  };
+  back.src = src;
+}
+
+if (!room) {
+  $("waiting").classList.add("hidden");
+  $("bad").classList.remove("hidden");
+} else {
+  $("tap").classList.remove("hidden");
+  $("go").onclick = () => { $("tap").classList.add("hidden"); keepAwake(); };
+
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.database();
+  const ref = db.ref("rooms/ps_" + room);
+
+  db.ref(".info/connected").on("value", (s) => {
+    const ok = s.val() === true;
+    $("dot").classList.toggle("ok", ok);
+    $("status").textContent = ok ? "已同步" : "重新連線中…";
+    if (ok) {
+      // 在線人數：斷線時自動移除自己
+      const me = ref.child("viewers").push();
+      me.onDisconnect().remove();
+      me.set(true);
+    }
+  });
+
+  ref.child("state").on("value", (s) => {
+    const st = s.val() || {};
+    if (st.title) { document.title = st.title; $("tapTitle").textContent = st.title; }
+    if (st.ended) { showOnly("ended"); hideImage(); $("page").textContent = ""; return; }
+    if (!st.img) {
+      showOnly("waiting"); hideImage();
+      $("waitTitle").textContent = st.title || "等待簡報開始";
+      $("page").textContent = "";
+      return;
+    }
+    if (st.black) { showOnly("black"); hideImage(); return; }
+    showOnly(null);
+    showImage(st.img);
+    $("page").textContent = st.n + " / " + st.total;
+  });
+}
+</script>
+</body>
+</html>
