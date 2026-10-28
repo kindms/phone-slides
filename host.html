@@ -58,7 +58,8 @@
   #err { margin: auto; text-align: center; line-height: 1.8; color: #bbb; }
 
   /* 選檔畫面 */
-  #pick { margin: auto; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 16px; }
+  body:has(#pick:not(.hidden)) { overflow-y: auto; }
+  #pick { margin: auto; flex-shrink: 0; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 16px; }
   #pick h1 { font-size: 24px; text-align: center; }
   #pick .sub { color: #999; font-size: 14px; text-align: center; line-height: 1.6; }
   .field { background: #1b1b1b; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -70,6 +71,35 @@
   .filebtn input { display: none; }
   #prepare { font-size: 19px; font-weight: 700; padding: 16px; border-radius: 12px; border: 0; background: #2a7de1; color: #fff; }
   #progress { color: #aaa; font-size: 14px; text-align: center; min-height: 20px; }
+
+  /* 電腦螢幕：整體放大 */
+  @media (min-width: 900px) {
+    body { padding: 20px 28px; gap: 16px; }
+    #pick { max-width: 760px; gap: 18px; }
+    #pick h1 { font-size: 40px; }
+    #pick .sub { font-size: 19px; }
+    .field { padding: 18px 24px; gap: 10px; border-radius: 16px; }
+    .field label { font-size: 21px; }
+    .field small { font-size: 16px; }
+    .field input[type=text] { font-size: 20px; padding: 14px; }
+    .filebtn { padding: 24px; font-size: 20px; border-radius: 14px; }
+    #prepare { font-size: 24px; padding: 22px; border-radius: 16px; }
+    #progress { font-size: 18px; }
+    header { font-size: 18px; gap: 14px; }
+    header h1 { font-size: 24px; }
+    .pill { padding: 6px 14px; }
+    .frame .tag { font-size: 15px; padding: 4px 10px; }
+    .frame .ov { font-size: 24px; }
+    #nextWrap { flex-direction: column; align-items: stretch; }
+    #nextWrap .frame { width: 100%; }
+    #nextLabel { font-size: 16px; }
+    #notes { font-size: 22px; padding: 18px; }
+    .controls button { font-size: 26px; padding: 22px 0; border-radius: 14px; }
+    .tools button { font-size: 18px; padding: 14px 0; }
+    #qr .url { font-size: 20px; }
+    #qr h2 { font-size: 32px; }
+    #qr button { font-size: 20px; padding: 12px 28px; }
+  }
 </style>
 </head>
 <body>
