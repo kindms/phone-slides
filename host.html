@@ -8,6 +8,8 @@
 <title>講者遙控｜手機簡報</title>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="firebase-config.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -54,18 +56,53 @@
   #qr button { font-size: 16px; padding: 10px 22px; border-radius: 999px; border: 1px solid #999; background: #fff; }
   .hidden { display: none !important; }
   #err { margin: auto; text-align: center; line-height: 1.8; color: #bbb; }
+
+  /* 選檔畫面 */
+  #pick { margin: auto; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 16px; }
+  #pick h1 { font-size: 24px; text-align: center; }
+  #pick .sub { color: #999; font-size: 14px; text-align: center; line-height: 1.6; }
+  .field { background: #1b1b1b; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .field label { font-weight: 700; font-size: 15px; }
+  .field small { color: #888; font-size: 13px; line-height: 1.5; }
+  .field input[type=text] { font-size: 16px; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #111; color: #eee; }
+  .filebtn { display: block; text-align: center; padding: 14px; border-radius: 10px; border: 2px dashed #444; color: #ccc; font-size: 15px; cursor: pointer; }
+  .filebtn.ok { border-style: solid; border-color: #2a7de1; color: #fff; }
+  .filebtn input { display: none; }
+  #prepare { font-size: 19px; font-weight: 700; padding: 16px; border-radius: 12px; border: 0; background: #2a7de1; color: #fff; }
+  #progress { color: #aaa; font-size: 14px; text-align: center; min-height: 20px; }
 </style>
 </head>
 <body>
 <div id="err" class="hidden"></div>
 
-<header id="head">
+<section id="pick" class="hidden">
+  <h1>手機簡報</h1>
+  <p class="sub">選好檔案就能開始。檔案只在你這台裝置上打開，<br>翻到哪一張，才把那一張送到聽眾手機。</p>
+  <div class="field">
+    <label>① 簡報 PDF（必選）</label>
+    <label class="filebtn" id="pdfBtn"><input type="file" id="pdfFile" accept="application/pdf,.pdf"><span>選擇 PDF 檔</span></label>
+    <small>PowerPoint：檔案 → 另存新檔（或匯出）→ PDF</small>
+  </div>
+  <div class="field">
+    <label>② 同一份 PPT（選配，只用來顯示備忘稿）</label>
+    <label class="filebtn" id="pptBtn"><input type="file" id="pptFile" accept=".pptx"><span>選擇 PPT 檔（.pptx）</span></label>
+    <small>不選也可以，講者頁就不會顯示備忘稿。</small>
+  </div>
+  <div class="field">
+    <label for="titleIn">簡報標題</label>
+    <input type="text" id="titleIn" placeholder="聽眾等待時會看到這個標題">
+  </div>
+  <button id="prepare" disabled>準備簡報</button>
+  <div id="progress"></div>
+</section>
+
+<header id="head" class="hidden">
   <h1 id="title">載入中…</h1>
   <span class="pill"><span id="dot"></span><span id="viewers">0</span> 人在看</span>
   <span class="pill" id="pos">尚未開始</span>
 </header>
 
-<main id="main">
+<main id="main" class="hidden">
   <div id="cur" class="frame">
     <img id="curImg" alt="">
     <span class="tag live">聽眾現在看到</span>
@@ -78,11 +115,11 @@
   <div id="side"><div id="notes"></div></div>
 </main>
 
-<div class="controls" id="ctl">
+<div class="controls hidden" id="ctl">
   <button id="prev">◀ 上一張</button>
   <button id="next">開始簡報 ▶</button>
 </div>
-<div class="tools" id="tools">
+<div class="tools hidden" id="tools">
   <button id="btnQr">QR Code</button>
   <button id="btnBlack">黑畫面</button>
   <button id="btnRestart">回第一張</button>
@@ -99,34 +136,44 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const deck = (new URLSearchParams(location.search).get("d") || "").replace(/[^A-Za-z0-9_-]/g, "");
-const base = "d/" + deck + "/";
-let M = null, ref = null;
+// M = { title, room, slides: [{ src, notes }] }；src 是圖片網址（已上傳的簡報）或 data URL（現場選的 PDF）
+let M = null, ref = null, live = false;
 let n = 0, black = false, ended = false;   // n = 0 代表尚未開始
 
 function fail(html) {
-  ["head", "main", "ctl", "tools"].forEach((k) => $(k).classList.add("hidden"));
+  ["head", "main", "ctl", "tools", "pick"].forEach((k) => $(k).classList.add("hidden"));
   $("err").innerHTML = html;
   $("err").classList.remove("hidden");
+}
+
+function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function recall(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+function newRoom() {
+  const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", r = new Uint32Array(6);
+  crypto.getRandomValues(r);
+  return Array.from(r, (x) => a[x % a.length]).join("");
 }
 
 function audienceUrl() {
   return new URL("./?r=" + M.room, location.href).href;
 }
 
-function push() {
-  const s = M.slides[n - 1];
-  ref.child("state").set({
-    title: M.title, total: M.slides.length, n,
-    img: s ? base + s.img : "", black, ended,
-    ts: firebase.database.ServerValue.TIMESTAMP,
-  });
+// 只送有變動的欄位，聽眾端不會重複下載同一張圖
+function push(fields) {
+  ref.child("state").update({ ...fields, ts: firebase.database.ServerValue.TIMESTAMP });
   render();
+}
+
+function slideFields() {
+  const s = M.slides[n - 1];
+  return { n, img: s ? s.src : "", black: false, ended: false };
 }
 
 function render() {
   const total = M.slides.length, s = M.slides[n - 1], nx = M.slides[n];
-  $("curImg").src = s ? base + s.img : "";
-  $("nextImg").src = nx ? base + nx.img : "";
+  $("curImg").src = s ? s.src : M.slides[0].src;
+  $("nextImg").src = nx ? nx.src : "";
   $("nextLabel").textContent = nx ? "下一張（第 " + (n + 1) + " 張）" : "這是最後一張";
   $("notes").textContent = s ? (s.notes || "") : (M.slides[0].notes ? "【第 1 張備忘稿】\n" + M.slides[0].notes : "");
   $("pos").textContent = n ? n + " / " + total : "尚未開始";
@@ -135,61 +182,166 @@ function render() {
   $("next").disabled = n >= total;
   const ov = $("curOv");
   ov.classList.toggle("hidden", n > 0 && !black && !ended);
-  ov.textContent = ended ? "簡報已結束" : black ? "黑畫面中（聽眾看不到投影片）" : "尚未開始，聽眾在等待畫面";
+  ov.textContent = ended ? "簡報已結束" : black ? "黑畫面中（聽眾看不到投影片）" : "尚未開始，聽眾在等待畫面（這是第 1 張）";
   $("btnBlack").classList.toggle("active", black);
   $("btnBlack").textContent = black ? "取消黑畫面" : "黑畫面";
-  if (nx) new Image().src = base + nx.img;     // 講者這邊先預載，翻頁更順
+  if (nx && !live) new Image().src = nx.src;     // 講者這邊先預載，翻頁更順
 }
 
 function go(to) {
   to = Math.max(1, Math.min(M.slides.length, to));
   if (to === n && !black && !ended) return;
   n = to; black = false; ended = false;
-  push();
+  push(slideFields());
 }
 
 function showQr() {
   const url = audienceUrl();
   $("qrTitle").textContent = M.title;
-  $("qrUrl").textContent = url;
+  $("qrUrl").textContent = "房號 " + M.room + "　" + url;
   $("qrImg").src = "https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=10&data=" + encodeURIComponent(url);
   $("qr").classList.remove("hidden");
 }
 
-async function init() {
-  if (!deck) return fail("講者連結不完整。<br>請用轉檔時產生的「講者遙控」連結打開。");
-  try {
-    const r = await fetch(base + "manifest.json", { cache: "no-store" });
-    if (!r.ok) throw 0;
-    M = await r.json();
-  } catch (e) {
-    return fail("找不到這份簡報。<br>如果剛上傳，等 1～2 分鐘再重新整理。");
+// ---------- 現場選檔：PDF 轉圖片、PPT 抓備忘稿 ----------
+const xmlDoc = (s) => new DOMParser().parseFromString(s, "application/xml");
+const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
+const R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+
+function relsMap(xml, dir) {
+  const map = {};
+  for (const r of xmlDoc(xml).getElementsByTagName("Relationship")) {
+    const t = r.getAttribute("Target");
+    map[r.getAttribute("Id")] = { type: r.getAttribute("Type"), path: t.startsWith("/") ? t.slice(1) : new URL(t, "http://x/" + dir).pathname.slice(1) };
   }
+  return map;
+}
+
+// 依投影片順序回傳備忘稿；隱藏的投影片略過（PDF 匯出時也會略過）
+async function pptNotes(file) {
+  const zip = await JSZip.loadAsync(file);
+  const read = (p) => zip.file(p) ? zip.file(p).async("string") : Promise.resolve(null);
+  const rels = relsMap(await read("ppt/_rels/presentation.xml.rels"), "ppt/");
+  const ids = xmlDoc(await read("ppt/presentation.xml")).getElementsByTagNameNS(P_NS, "sldId");
+  const out = [];
+  for (const id of ids) {
+    const slidePath = rels[id.getAttributeNS(R_NS, "id")].path;
+    const slideXml = xmlDoc(await read(slidePath));
+    if (slideXml.documentElement.getAttribute("show") === "0") continue;
+    const dir = slidePath.replace(/[^/]+$/, "");
+    const sRels = await read(dir + "_rels/" + slidePath.split("/").pop() + ".rels");
+    const notesRel = sRels && Object.values(relsMap(sRels, dir)).find((r) => r.type.endsWith("/notesSlide"));
+    let text = "";
+    if (notesRel) {
+      for (const sp of xmlDoc(await read(notesRel.path)).getElementsByTagNameNS(P_NS, "sp")) {
+        const ph = sp.getElementsByTagNameNS(P_NS, "ph")[0];
+        if (!ph || ph.getAttribute("type") !== "body") continue;
+        text = Array.from(sp.getElementsByTagNameNS(A_NS, "p"),
+          (p) => Array.from(p.getElementsByTagNameNS(A_NS, "t"), (t) => t.textContent).join("")).join("\n").trim();
+      }
+    }
+    out.push(text);
+  }
+  return out;
+}
+
+async function pdfSlides(file, onPage) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const slides = [], canvas = document.createElement("canvas"), cx = canvas.getContext("2d");
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const vp0 = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: 1600 / Math.max(vp0.width, vp0.height) });  // 長邊 1600px，手機夠清楚、傳得快
+    canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+    cx.fillStyle = "#fff"; cx.fillRect(0, 0, canvas.width, canvas.height);
+    // print 模式不靠畫面更新排程，切到背景也會繼續轉
+    await page.render({ canvasContext: cx, viewport: vp, intent: "print" }).promise;
+    slides.push({ src: canvas.toDataURL("image/jpeg", 0.8), notes: "" });
+    page.cleanup();
+    onPage(i, pdf.numPages);
+  }
+  return slides;
+}
+
+function showPicker() {
+  $("pick").classList.remove("hidden");
+  const pdfIn = $("pdfFile"), pptIn = $("pptFile");
+  const mark = (input, btn, empty) => {
+    const f = input.files[0];
+    $(btn).classList.toggle("ok", !!f);
+    $(btn).querySelector("span").textContent = f ? "✓ " + f.name : empty;
+  };
+  pdfIn.onchange = () => {
+    mark(pdfIn, "pdfBtn", "選擇 PDF 檔");
+    const f = pdfIn.files[0];
+    if (f && !$("titleIn").value) $("titleIn").value = f.name.replace(/\.pdf$/i, "");
+    $("prepare").disabled = !f;
+  };
+  pptIn.onchange = () => mark(pptIn, "pptBtn", "選擇 PPT 檔（.pptx）");
+
+  $("prepare").onclick = async () => {
+    const pdf = pdfIn.files[0], ppt = pptIn.files[0];
+    if (!pdf) return;
+    $("prepare").disabled = true;
+    try {
+      const slides = await pdfSlides(pdf, (i, t) => { $("progress").textContent = "轉換投影片 " + i + " / " + t; });
+      if (ppt) {
+        $("progress").textContent = "讀取備忘稿…";
+        try {
+          const notes = await pptNotes(ppt);
+          slides.forEach((s, i) => { s.notes = notes[i] || ""; });
+          if (notes.length !== slides.length)
+            alert("PPT 有 " + notes.length + " 張，PDF 有 " + slides.length + " 張，張數不同，備忘稿可能對不上。");
+        } catch (e) { alert("PPT 讀不到備忘稿，先只用 PDF 簡報。"); }
+      }
+      const title = $("titleIn").value.trim() || pdf.name.replace(/\.pdf$/i, "");
+      const room = recall("ps.room") || newRoom();
+      store("ps.room", room);
+      live = true;
+      M = { title, room, slides };
+      $("pick").classList.add("hidden");
+      start();
+    } catch (e) {
+      $("progress").textContent = "這個 PDF 打不開，請換一個檔案試試。";
+      $("prepare").disabled = false;
+    }
+  };
+}
+
+// ---------- 開始簡報 ----------
+async function start() {
+  ["head", "main", "ctl", "tools"].forEach((k) => $(k).classList.remove("hidden"));
   document.title = "講者遙控｜" + M.title;
   $("title").textContent = M.title;
 
-  firebase.initializeApp(FIREBASE_CONFIG);
+  if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   const db = firebase.database();
   ref = db.ref("rooms/ps_" + M.room);
 
   db.ref(".info/connected").on("value", (s) => $("dot").classList.toggle("ok", s.val() === true));
   ref.child("viewers").on("value", (s) => { $("viewers").textContent = s.numChildren(); });
 
-  // 重新整理或換裝置時，接續上次的位置
+  // 重新整理或換裝置時，接續上次的位置（同一份簡報才接續）
   const st = (await ref.child("state").get()).val();
-  if (st && st.total === M.slides.length) {
+  if (st && st.total === M.slides.length && st.title === M.title) {
     n = st.n || 0; black = !!st.black; ended = !!st.ended;
-    render();
+    push({ title: M.title, total: M.slides.length, ...(n && !ended ? { img: M.slides[n - 1].src } : {}) });
   } else {
-    n = 0;
-    push();
+    n = 0; black = false; ended = false;
+    push({ title: M.title, total: M.slides.length, n: 0, img: "", black: false, ended: false });
   }
 
   $("next").onclick = () => go(n + 1);
   $("prev").onclick = () => go(n - 1);
-  $("btnBlack").onclick = () => { if (!n) return; black = !black; ended = false; push(); };
+  $("btnBlack").onclick = () => { if (!n || ended) return; black = !black; push({ black }); };
   $("btnRestart").onclick = () => { if (confirm("回到第一張？")) go(1); };
-  $("btnEnd").onclick = () => { if (confirm("結束簡報？聽眾會看到「簡報結束」。")) { ended = true; black = false; push(); } };
+  $("btnEnd").onclick = () => {
+    if (!confirm("結束簡報？聽眾會看到「簡報結束」。")) return;
+    ended = true; black = false;
+    push(live ? { ended, black, img: "" } : { ended, black });   // 現場簡報結束時清掉圖片，不留在網路上
+  };
   $("btnQr").onclick = showQr;
   $("qrClose").onclick = () => $("qr").classList.add("hidden");
   $("copy").onclick = async () => {
@@ -213,6 +365,22 @@ async function init() {
     const dx = e.changedTouches[0].clientX - x0; x0 = null;
     if (Math.abs(dx) > 50) go(dx < 0 ? n + 1 : n - 1);
   });
+
+  if (live && n === 0) showQr();   // 現場簡報先秀 QR Code 讓大家掃
+}
+
+async function init() {
+  if (!deck) return showPicker();
+  const base = "d/" + deck + "/";
+  try {
+    const r = await fetch(base + "manifest.json", { cache: "no-store" });
+    if (!r.ok) throw 0;
+    const m = await r.json();
+    M = { title: m.title, room: m.room, slides: m.slides.map((s) => ({ src: base + s.img, notes: s.notes })) };
+  } catch (e) {
+    return fail("找不到這份簡報。<br>如果剛上傳，等 1～2 分鐘再重新整理。");
+  }
+  start();
 }
 
 init();

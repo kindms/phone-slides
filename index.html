@@ -42,7 +42,16 @@
 <div id="waiting" class="msg"><div class="spin"></div><h1 id="waitTitle">連線中…</h1><p>簡報開始後，畫面會自動出現</p></div>
 <div id="black" class="msg hidden"></div>
 <div id="ended" class="msg hidden"><h1>簡報結束</h1><p>謝謝你的參與！</p></div>
-<div id="bad" class="msg hidden"><h1>連結不完整</h1><p>請重新掃描 QR Code</p></div>
+<div id="bad" class="msg hidden">
+  <h1 style="font-size:28px">手機簡報</h1>
+  <p>沒有投影機也能簡報：講者翻到哪一張，<br>大家的手機就跟到哪一張。</p>
+  <a href="host.html" style="margin-top:10px;font-size:18px;font-weight:700;padding:14px 36px;border-radius:999px;background:#2a7de1;color:#fff;text-decoration:none">我是講者：選 PDF 開始簡報</a>
+  <p style="margin-top:18px">我是聽眾：請掃講者的 QR Code，或輸入房號</p>
+  <form id="join" style="display:flex;gap:8px">
+    <input id="code" maxlength="6" placeholder="房號" autocapitalize="characters" style="width:130px;font-size:18px;padding:10px;border-radius:10px;border:1px solid #444;background:#111;color:#eee;text-align:center;letter-spacing:3px">
+    <button style="font-size:16px;padding:10px 18px;border-radius:10px;border:0;background:#fff;color:#000">加入</button>
+  </form>
+</div>
 
 <div id="tap" class="msg hidden">
   <h1 id="tapTitle">準備好了</h1>
@@ -140,6 +149,12 @@ function showImage(src) {
 if (!room) {
   $("waiting").classList.add("hidden");
   $("bad").classList.remove("hidden");
+  $("bar").classList.add("hidden");
+  $("join").onsubmit = (e) => {
+    e.preventDefault();
+    const c = $("code").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (c) location.search = "?r=" + c;
+  };
 } else {
   $("tap").classList.remove("hidden");
   $("go").onclick = () => { $("tap").classList.add("hidden"); goFullscreen(); keepAwake(); syncFsButton(); };
