@@ -32,6 +32,16 @@
   #fs { position: fixed; right: 10px; top: calc(10px + env(safe-area-inset-top)); z-index: 4;
     width: 40px; height: 40px; border-radius: 10px; border: 0; background: rgba(255,255,255,.12);
     color: #ccc; font-size: 20px; line-height: 40px; }
+  /* 電腦或平板：文字跟著螢幕放大 */
+  @media (min-width: 900px) {
+    .msg { gap: 22px; }
+    .msg h1 { font-size: clamp(32px, 3vw, 56px) !important; }
+    .msg p { font-size: clamp(19px, 1.6vw, 30px) !important; }
+    #tap button, #bad a { font-size: clamp(22px, 1.8vw, 34px) !important; padding: 18px 48px !important; }
+    #bad input, #bad button { font-size: clamp(20px, 1.6vw, 30px) !important; }
+    #bad input { width: 200px !important; }
+    #bar { font-size: 16px; padding: 10px 18px; }
+  }
   .spin { width: 28px; height: 28px; border: 3px solid #333; border-top-color: #aaa; border-radius: 50%; animation: s 1s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
 </style>
