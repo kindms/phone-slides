@@ -29,6 +29,9 @@
   #tap { background: #000; z-index: 5; }
   #tap button { margin-top: 8px; font-size: 18px; font-weight: 700; padding: 14px 36px; border-radius: 999px;
     border: 0; background: #fff; color: #000; }
+  #fs { position: fixed; right: 10px; top: calc(10px + env(safe-area-inset-top)); z-index: 4;
+    width: 40px; height: 40px; border-radius: 10px; border: 0; background: rgba(255,255,255,.12);
+    color: #ccc; font-size: 20px; line-height: 40px; }
   .spin { width: 28px; height: 28px; border: 3px solid #333; border-top-color: #aaa; border-radius: 50%; animation: s 1s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
 </style>
@@ -43,9 +46,11 @@
 
 <div id="tap" class="msg hidden">
   <h1 id="tapTitle">準備好了</h1>
-  <p>講者翻到哪一頁，你的手機就會跟著換<br>手機橫放，畫面會更大</p>
+  <p>講者翻到哪一頁，你的手機就會跟著換<br><span id="tapTip">按下後會切換成全螢幕</span></p>
   <button id="go">開始觀看</button>
 </div>
+<button id="fs" class="hidden" aria-label="全螢幕">⛶</button>
+<video id="vid" playsinline muted autoplay style="position:fixed;width:1px;height:1px;opacity:0;pointer-events:none"></video>
 
 <div id="bar"><span><span id="dot"></span><span id="status">連線中</span></span><span id="page"></span></div>
 
@@ -60,13 +65,63 @@ async function keepAwake() {
 }
 document.addEventListener("visibilitychange", keepAwake);
 
+// 全螢幕：Android / iPad 可以；iPhone Safari 不支援網頁全螢幕，改提示橫放
+const docEl = document.documentElement;
+const canFs = !!(docEl.requestFullscreen || docEl.webkitRequestFullscreen);
+const isFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+async function enterFullscreen() {
+  try {
+    if (docEl.requestFullscreen) await docEl.requestFullscreen({ navigationUI: "hide" });
+    else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+    await screen.orientation.lock("landscape");   // 只有全螢幕時才鎖得住，失敗就算了
+  } catch (e) {}
+}
+// iPhone 影片模式：把投影片即時畫進 canvas，轉成「直播影片」，用內建播放器全螢幕
+const vid = $("vid"), cv = document.createElement("canvas"), cx = cv.getContext("2d");
+const forceVideo = new URLSearchParams(location.search).has("video");   // 測試用：?video 強制影片模式
+const useVideo = !!cv.captureStream && (forceVideo || (!canFs && !!vid.webkitEnterFullscreen));
+let vImg = null, vText = "";
+function paint() {
+  if (!useVideo) return;
+  cv.width = vImg ? vImg.naturalWidth : 1920;
+  cv.height = vImg ? vImg.naturalHeight : 1080;
+  cx.fillStyle = "#000"; cx.fillRect(0, 0, cv.width, cv.height);
+  if (vImg) cx.drawImage(vImg, 0, 0);
+  else if (vText) {
+    cx.fillStyle = "#ccc"; cx.font = "bold 72px -apple-system, 'PingFang TC', sans-serif";
+    cx.textAlign = "center"; cx.textBaseline = "middle";
+    cx.fillText(vText, cv.width / 2, cv.height / 2);
+  }
+}
+function setVideo(img, text) { vImg = img; vText = text || ""; paint(); }
+if (useVideo) {
+  paint();
+  vid.srcObject = cv.captureStream(10);
+  vid.play().catch(() => {});
+  setInterval(paint, 1000);   // 畫面沒變也持續出畫格，直播才不會斷
+}
+
+const canFullscreen = canFs || useVideo;
+function syncFsButton() { $("fs").classList.toggle("hidden", !canFullscreen || isFs()); }
+document.addEventListener("fullscreenchange", syncFsButton);
+document.addEventListener("webkitfullscreenchange", syncFsButton);
+if (!canFullscreen) $("tapTip").innerHTML = "把手機<b>橫放</b>，畫面會更大";
+else if (useVideo) $("tapTip").innerHTML = "按下後會用全螢幕播放<br>手機<b>橫放</b>畫面最大";
+
+function goFullscreen() {
+  if (!useVideo) return enterFullscreen();
+  vid.play().catch(() => {});
+  try { vid.webkitEnterFullscreen ? vid.webkitEnterFullscreen() : vid.requestFullscreen(); } catch (e) {}
+}
+
 function showOnly(id) {
   ["waiting", "black", "ended"].forEach((k) => $(k).classList.toggle("hidden", k !== id));
 }
 
-function hideImage() {
+function hideImage(text) {
   front.classList.remove("on");
   shownSrc = "";
+  setVideo(null, text);
 }
 
 function showImage(src) {
@@ -77,6 +132,7 @@ function showImage(src) {
     back.classList.add("on");
     front.classList.remove("on");
     [front, back] = [back, front];
+    setVideo(front);
   };
   back.src = src;
 }
@@ -86,7 +142,8 @@ if (!room) {
   $("bad").classList.remove("hidden");
 } else {
   $("tap").classList.remove("hidden");
-  $("go").onclick = () => { $("tap").classList.add("hidden"); keepAwake(); };
+  $("go").onclick = () => { $("tap").classList.add("hidden"); goFullscreen(); keepAwake(); syncFsButton(); };
+  $("fs").onclick = goFullscreen;
 
   firebase.initializeApp(FIREBASE_CONFIG);
   const db = firebase.database();
@@ -107,9 +164,9 @@ if (!room) {
   ref.child("state").on("value", (s) => {
     const st = s.val() || {};
     if (st.title) { document.title = st.title; $("tapTitle").textContent = st.title; }
-    if (st.ended) { showOnly("ended"); hideImage(); $("page").textContent = ""; return; }
+    if (st.ended) { showOnly("ended"); hideImage("簡報結束，謝謝你的參與！"); $("page").textContent = ""; return; }
     if (!st.img) {
-      showOnly("waiting"); hideImage();
+      showOnly("waiting"); hideImage("等待簡報開始…");
       $("waitTitle").textContent = st.title || "等待簡報開始";
       $("page").textContent = "";
       return;
